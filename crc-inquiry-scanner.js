@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         TUBOL INQUIRY SCANNER
 // @namespace    http://tampermonkey.net/
-// @version      1.0.0
-// @description  Standalone CRC inquiry scanner with unique inquiry IDs and same-bureau open-account matching
+// @version      1.1.0
+// @description  Standalone CRC hard-inquiry scanner with unique inquiry IDs and bureau-specific open-account matching
 // @match        https://app.creditrepaircloud.com/app/clients/*
 // @grant        none
 // ==/UserScript==
@@ -16,15 +16,31 @@
     const CONFIG = {
         recentDays: 35,
         panelId: 'tubol-inquiry-panel',
-        scanButtonId: 'tubol-inquiry-scan-btn'
+        scanButtonId: 'tubol-inquiry-scan-btn',
+        styleId: 'tubol-inquiry-styles'
     };
 
+    const BUREAUS = [
+        { key: 'experian', short: 'EX', label: 'EXPERIAN' },
+        { key: 'equifax', short: 'EQU', label: 'EQUIFAX' },
+        { key: 'transunion', short: 'TU', label: 'TRANSUNION' }
+    ];
+
+    const ACTION_PATTERNS = [
+        /click\s+to\s+dispute\s+this\s+inquiry/i,
+        /click\s+to\s+view\s+dispute/i,
+        /click\s+to\s+dispute/i,
+        /already\s+disputed/i
+    ];
+
+    const DATE_REGEX = /\b\d{1,2}[\/-]\d{1,2}[\/-]\d{2,4}\b/;
+
     const STYLE = `
-        #tubol-inquiry-panel {
+        #${CONFIG.panelId} {
             position: fixed;
             top: 20px;
             right: 20px;
-            width: 460px;
+            width: 470px;
             height: 88vh;
             max-height: 88vh;
             z-index: 999999;
@@ -40,7 +56,7 @@
             box-shadow: 0 12px 35px rgba(0,0,0,.45);
         }
 
-        #tubol-inquiry-panel .tubol-topbar {
+        #${CONFIG.panelId} .ti-topbar {
             min-height: 58px;
             display: flex;
             align-items: center;
@@ -51,21 +67,10 @@
             border-bottom: 1px solid #3a3b3c;
         }
 
-        #tubol-inquiry-panel .tubol-title {
-            font-size: 15px;
-            font-weight: 800;
-        }
-
-        #tubol-inquiry-panel .tubol-controls {
-            display: flex;
-            gap: 7px;
-        }
-
-        #tubol-inquiry-panel button {
-            font-family: inherit;
-        }
-
-        #tubol-inquiry-panel .tubol-window-btn {
+        #${CONFIG.panelId} .ti-title { font-size: 15px; font-weight: 800; }
+        #${CONFIG.panelId} .ti-controls { display: flex; gap: 7px; }
+        #${CONFIG.panelId} button { font-family: inherit; }
+        #${CONFIG.panelId} .ti-window-btn {
             width: 36px;
             height: 36px;
             border: 0;
@@ -75,11 +80,10 @@
             cursor: pointer;
             font-size: 17px;
         }
+        #${CONFIG.panelId} .ti-window-btn:hover { background: #4e4f50; }
+        #${CONFIG.panelId} .ti-close:hover { background: #e81123; }
 
-        #tubol-inquiry-panel .tubol-window-btn:hover { background: #4e4f50; }
-        #tubol-inquiry-panel .tubol-close:hover { background: #e81123; }
-
-        #tubol-inquiry-panel .tubol-stats {
+        #${CONFIG.panelId} .ti-stats {
             display: grid;
             grid-template-columns: repeat(4, 1fr);
             gap: 8px;
@@ -87,38 +91,31 @@
             background: #18191a;
             border-bottom: 1px solid #3a3b3c;
         }
-
-        #tubol-inquiry-panel .tubol-stat {
-            padding: 10px 8px;
+        #${CONFIG.panelId} .ti-stat {
+            padding: 9px 7px;
             background: #242526;
             border: 1px solid #3a3b3c;
             border-radius: 8px;
             text-align: center;
         }
-
-        #tubol-inquiry-panel .tubol-stat b {
-            display: block;
-            font-size: 16px;
-        }
-
-        #tubol-inquiry-panel .tubol-stat span {
+        #${CONFIG.panelId} .ti-stat b { display: block; font-size: 16px; }
+        #${CONFIG.panelId} .ti-stat span {
             display: block;
             margin-top: 3px;
             color: #8f9397;
-            font-size: 10px;
+            font-size: 9px;
             text-transform: uppercase;
             letter-spacing: .4px;
         }
 
-        #tubol-inquiry-panel .tubol-tabs {
+        #${CONFIG.panelId} .ti-tabs {
             display: flex;
             gap: 4px;
             padding: 6px 8px 0;
             background: #242526;
             border-bottom: 1px solid #3a3b3c;
         }
-
-        #tubol-inquiry-panel .tubol-tab {
+        #${CONFIG.panelId} .ti-tab {
             flex: 1;
             height: 44px;
             background: transparent;
@@ -129,26 +126,27 @@
             font-size: 12px;
             font-weight: 800;
         }
-
-        #tubol-inquiry-panel .tubol-tab.active {
+        #${CONFIG.panelId} .ti-tab.active {
             color: #2d88ff;
             background: #18191a;
             box-shadow: inset 0 -3px #2d88ff;
         }
 
-        #tubol-inquiry-panel .tubol-content {
+        #${CONFIG.panelId} .ti-content {
             flex: 1;
             min-height: 0;
             overflow: auto;
-            padding: 10px 14px 80px;
+            padding: 10px 14px 84px;
             background: #18191a;
         }
-
-        #tubol-inquiry-panel .tubol-section {
-            margin-bottom: 18px;
+        #${CONFIG.panelId} .ti-status {
+            margin: 2px 2px 10px;
+            color: #8f9397;
+            font-size: 11px;
+            line-height: 1.45;
         }
-
-        #tubol-inquiry-panel .tubol-section-title {
+        #${CONFIG.panelId} .ti-section { margin-bottom: 18px; }
+        #${CONFIG.panelId} .ti-section-title {
             display: flex;
             justify-content: space-between;
             align-items: center;
@@ -159,31 +157,22 @@
             text-transform: uppercase;
             cursor: pointer;
         }
-
-        #tubol-inquiry-panel .tubol-item {
+        #${CONFIG.panelId} .ti-item {
             padding: 10px 12px;
             margin-bottom: 6px;
             border-radius: 8px;
             border: 1px solid transparent;
         }
-
-        #tubol-inquiry-panel .tubol-item.connected {
+        #${CONFIG.panelId} .ti-item.connected {
             background: rgba(58,178,92,.10);
             border-color: rgba(58,178,92,.28);
         }
-
-        #tubol-inquiry-panel .tubol-item.unconnected {
+        #${CONFIG.panelId} .ti-item.unconnected {
             background: rgba(224,82,82,.10);
             border-color: rgba(224,82,82,.28);
         }
-
-        #tubol-inquiry-panel .tubol-item-head {
-            display: flex;
-            gap: 8px;
-            align-items: center;
-        }
-
-        #tubol-inquiry-panel .tubol-creditor {
+        #${CONFIG.panelId} .ti-head { display: flex; gap: 8px; align-items: center; }
+        #${CONFIG.panelId} .ti-creditor {
             flex: 1;
             min-width: 0;
             font-size: 14px;
@@ -192,10 +181,9 @@
             text-overflow: ellipsis;
             white-space: nowrap;
         }
-
-        #tubol-inquiry-panel .tubol-badge {
+        #${CONFIG.panelId} .ti-badge {
             flex-shrink: 0;
-            min-width: 34px;
+            min-width: 38px;
             padding: 3px 6px;
             border-radius: 6px;
             text-align: center;
@@ -203,21 +191,30 @@
             font-weight: 800;
             background: #3a3b3c;
         }
-
-        #tubol-inquiry-panel .tubol-meta {
-            margin-top: 4px;
+        #${CONFIG.panelId} .ti-meta { margin-top: 4px; color: #8f9397; font-size: 11px; }
+        #${CONFIG.panelId} .ti-id { margin-top: 5px; color: #6f7174; font-size: 10px; }
+        #${CONFIG.panelId} .ti-empty {
+            margin: 10px 0;
+            padding: 28px 18px;
+            border: 1px solid #3a3b3c;
+            border-radius: 10px;
+            background: #242526;
             color: #8f9397;
-            font-size: 11px;
+            text-align: center;
+            font-size: 12px;
         }
-
-        #tubol-inquiry-panel .tubol-id {
-            margin-top: 5px;
-            color: #6f7174;
-            font-size: 10px;
-            word-break: break-all;
+        #${CONFIG.panelId} .ti-open-card {
+            padding: 10px 12px;
+            margin-bottom: 6px;
+            border-radius: 8px;
+            border: 1px solid #3a3b3c;
+            background: #242526;
         }
-
-        #tubol-inquiry-panel .tubol-copy-bar {
+        #${CONFIG.panelId} .ti-open-card.negative {
+            background: #3a2426;
+            border-color: #8f3a40;
+        }
+        #${CONFIG.panelId} .ti-copybar {
             position: absolute;
             left: 0;
             right: 0;
@@ -228,9 +225,8 @@
             background: #242526;
             border-top: 1px solid #3a3b3c;
         }
-
-        #tubol-inquiry-panel .tubol-copy-btn,
-        #tubol-inquiry-panel .tubol-main-scan {
+        #${CONFIG.panelId} .ti-copy,
+        #${CONFIG.panelId} .ti-scan {
             flex: 1;
             height: 40px;
             border: 0;
@@ -239,35 +235,35 @@
             font-size: 12px;
             font-weight: 800;
         }
-
-        #tubol-inquiry-panel .tubol-main-scan {
+        #${CONFIG.panelId} .ti-scan { background: #2374e1; color: #fff; }
+        #${CONFIG.panelId} .ti-copy { background: #3a3b3c; color: #e4e6eb; }
+        #${CONFIG.panelId} .ti-scan:hover { background: #3982e4; }
+        #${CONFIG.panelId} .ti-copy:hover { background: #4e4f50; }
+        #${CONFIG.scanButtonId} {
+            position: fixed;
+            right: 24px;
+            bottom: 24px;
+            z-index: 999998;
+            min-height: 44px;
+            padding: 0 18px;
+            border: 0;
+            border-radius: 9px;
+            cursor: pointer;
             background: #2374e1;
-            color: white;
+            color: #fff;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif;
+            font-size: 13px;
+            font-weight: 800;
+            box-shadow: 0 6px 18px rgba(0,0,0,.3);
         }
-
-        #tubol-inquiry-panel .tubol-copy-btn {
-            background: #3a3b3c;
-            color: #e4e6eb;
-        }
-
-        #tubol-inquiry-panel .tubol-empty {
-            margin: 10px 0;
-            padding: 28px 18px;
-            border: 1px solid #3a3b3c;
-            border-radius: 10px;
-            background: #242526;
-            color: #8f9397;
-            text-align: center;
-            font-size: 12px;
-        }
-
         @media (max-width: 600px) {
-            #tubol-inquiry-panel {
+            #${CONFIG.panelId} {
                 top: 10px;
                 right: 10px;
                 width: calc(100vw - 20px);
                 height: 90vh;
             }
+            #${CONFIG.scanButtonId} { right: 12px; bottom: 12px; }
         }
     `;
 
@@ -278,78 +274,171 @@
             .trim();
     }
 
-    function namesMatch(a, b) {
-        const left = normalizeName(a);
-        const right = normalizeName(b);
-        if (!left || !right) return false;
-        return left === right || left.includes(right) || right.includes(left);
+    function textValue(element) {
+        return (element?.innerText || element?.textContent || '').trim();
+    }
+
+    function isPlaceholder(value) {
+        const v = (value || '').trim();
+        return !v || v === '-' || v === '--' || v === '—';
     }
 
     function parseDate(value) {
         if (!value) return null;
-        const parts = value.split(/[\/\-]/).map(part => parseInt(part, 10));
+        const parts = value.split(/[\/\-]/).map(v => parseInt(v, 10));
         if (parts.length !== 3 || parts.some(Number.isNaN)) return null;
         let [month, day, year] = parts;
         if (year < 100) year += year <= 69 ? 2000 : 1900;
         const date = new Date(year, month - 1, day);
-        return Number.isNaN(date.getTime()) ? null : date;
+        if (Number.isNaN(date.getTime())) return null;
+        if (date.getMonth() !== month - 1 || date.getDate() !== day) return null;
+        return date;
     }
 
     function isRecent(item, days = CONFIG.recentDays) {
-        const inquiryDate = parseDate(item.date);
-        if (!inquiryDate) return false;
+        const d = parseDate(item.date);
+        if (!d) return false;
         const today = new Date();
         today.setHours(0, 0, 0, 0);
         const cutoff = new Date(today);
         cutoff.setDate(cutoff.getDate() - days);
-        inquiryDate.setHours(0, 0, 0, 0);
-        return inquiryDate >= cutoff && inquiryDate <= today;
+        d.setHours(0, 0, 0, 0);
+        return d >= cutoff && d <= today;
     }
 
-    function textValue(cell) {
-        return (cell?.innerText || cell?.textContent || '').trim();
-    }
-
-    function getAccountNameFromGrid(grid) {
-        const rows = Array.from(grid.querySelectorAll('.MuiDataGrid-row'));
-        for (const row of rows) {
-            const id = row.getAttribute('data-id') || '';
-            if (!id.includes('Account #')) continue;
-            return id.replace('summary_', '').split('---')[0].trim();
+    function stableHash(value) {
+        let hash = 2166136261;
+        for (let i = 0; i < value.length; i++) {
+            hash ^= value.charCodeAt(i);
+            hash = Math.imul(hash, 16777619);
         }
-        return '';
+        return (hash >>> 0).toString(16).toUpperCase().padStart(8, '0');
+    }
+
+    function getGridHeaders(grid) {
+        return new Set(
+            Array.from(grid.querySelectorAll('[role="columnheader"]'))
+                .map(node => node.getAttribute('data-field'))
+                .filter(Boolean)
+        );
+    }
+
+    function getRows(grid) {
+        return Array.from(grid.querySelectorAll('.MuiDataGrid-row'));
+    }
+
+    function getRowLabel(row) {
+        return normalizeName(textValue(row.querySelector('[data-field="label"]')));
+    }
+
+    function gridLooksLikeInquiryGrid(grid) {
+        const headers = getGridHeaders(grid);
+        if (!BUREAUS.some(b => headers.has(b.key))) return false;
+
+        const idText = [grid.id, grid.parentElement?.id, grid.parentElement?.parentElement?.id]
+            .filter(Boolean)
+            .join(' ')
+            .toLowerCase();
+
+        if (/inquir/.test(idText)) return true;
+
+        const gridText = textValue(grid);
+        if (ACTION_PATTERNS.some(rx => rx.test(gridText))) return true;
+
+        const rows = getRows(grid);
+        for (const row of rows) {
+            const rowText = textValue(row);
+            if (ACTION_PATTERNS.some(rx => rx.test(rowText))) return true;
+        }
+
+        // CRC inquiry grids commonly have a label row containing a date
+        // and a bureau cell, without account-detail rows such as Account Status.
+        const hasAccountDetailRow = rows.some(row => {
+            const label = getRowLabel(row);
+            return label === 'account status' || label === 'account ' || label === 'balance' || label === 'balance owed';
+        });
+        if (hasAccountDetailRow) return false;
+
+        const hasDate = DATE_REGEX.test(gridText);
+        const hasBureauValues = rows.some(row => BUREAUS.some(b => !isPlaceholder(textValue(row.querySelector(`[data-field="${b.key}"]`)))));
+        return hasDate && hasBureauValues;
+    }
+
+    function extractCreditorDateAction(row) {
+        const labelCell = row.querySelector('[data-field="label"]');
+        const labelText = textValue(labelCell);
+        const parentText = labelCell?.parentElement?.innerText || labelText || '';
+        const lines = parentText.split(/\r?\n/).map(v => v.trim()).filter(Boolean);
+
+        let creditor = '';
+        let date = '';
+        let action = '';
+
+        for (const line of lines) {
+            const dateMatch = line.match(DATE_REGEX);
+            if (dateMatch && !date) date = dateMatch[0];
+            if (ACTION_PATTERNS.some(rx => rx.test(line))) {
+                action = action || line;
+                continue;
+            }
+            const normalized = normalizeName(line);
+            if (BUREAUS.some(b => normalized === b.key) || normalized === 'hard inquiry' || normalized === 'inquiry') continue;
+            if (DATE_REGEX.test(line)) continue;
+            if (!creditor && line.length > 0) creditor = line;
+        }
+
+        const rowText = textValue(row);
+        if (!date) {
+            const match = rowText.match(DATE_REGEX);
+            if (match) date = match[0];
+        }
+        if (!action) {
+            const match = ACTION_PATTERNS.find(rx => rx.test(rowText));
+            if (match) {
+                const found = rowText.match(match);
+                if (found) action = found[0];
+            }
+        }
+
+        // Fallback: use the label cell itself as creditor when the parent
+        // contains nested elements/virtualized text not represented as lines.
+        if (!creditor && labelText && !DATE_REGEX.test(labelText) && !ACTION_PATTERNS.some(rx => rx.test(labelText))) {
+            const normalized = normalizeName(labelText);
+            if (!BUREAUS.some(b => normalized === b.key)) creditor = labelText;
+        }
+
+        return { creditor: creditor.trim(), date, action };
     }
 
     function extractOpenAccounts() {
-        const byBureau = {
-            experian: [],
-            equifax: [],
-            transunion: []
-        };
+        const byBureau = { experian: [], equifax: [], transunion: [] };
         const all = [];
-        const grids = document.querySelectorAll('.MuiDataGrid-root');
 
-        grids.forEach(grid => {
-            const headers = new Set(
-                Array.from(grid.querySelectorAll('[role="columnheader"]'))
-                    .map(header => header.getAttribute('data-field'))
-                    .filter(Boolean)
-            );
+        document.querySelectorAll('.MuiDataGrid-root').forEach(grid => {
+            if (gridLooksLikeInquiryGrid(grid)) return;
+            const headers = getGridHeaders(grid);
+            if (!BUREAUS.some(b => headers.has(b.key))) return;
 
-            if (!['experian', 'equifax', 'transunion'].some(key => headers.has(key))) return;
+            const rows = getRows(grid);
+            let accountName = '';
 
-            const account = getAccountNameFromGrid(grid);
-            if (!account) return;
+            for (const row of rows) {
+                const id = row.getAttribute('data-id') || '';
+                if (id.includes('Account #')) {
+                    accountName = id.replace('summary_', '').split('---')[0].trim();
+                    break;
+                }
+            }
+            if (!accountName) return;
 
-            const rows = Array.from(grid.querySelectorAll('.MuiDataGrid-row'));
-            const statusRow = rows.find(row => normalizeName(textValue(row.querySelector('[data-field="label"]'))) === 'account status');
+            const statusRow = rows.find(row => getRowLabel(row) === 'account status');
             if (!statusRow) return;
 
-            ['experian', 'equifax', 'transunion'].forEach(bureau => {
-                const status = normalizeName(textValue(statusRow.querySelector(`[data-field="${bureau}"]`)));
+            BUREAUS.forEach(bureau => {
+                const status = normalizeName(textValue(statusRow.querySelector(`[data-field="${bureau.key}"]`)));
                 if (status !== 'open') return;
-                const entry = { account, bureauKey: bureau };
-                byBureau[bureau].push(entry);
+                const entry = { account: accountName, bureauKey: bureau.key };
+                byBureau[bureau.key].push(entry);
                 all.push(entry);
             });
         });
@@ -359,63 +448,33 @@
 
     function extractInquiries() {
         const results = [];
-        const inquiryContainer = document.querySelector('[id*="inquir"]');
-        if (!inquiryContainer) return results;
+        const grids = Array.from(document.querySelectorAll('.MuiDataGrid-root'));
+        const candidateGrids = grids.filter(gridLooksLikeInquiryGrid);
 
-        inquiryContainer.querySelectorAll('.MuiDataGrid-root').forEach(grid => {
-            const headers = new Set(
-                Array.from(grid.querySelectorAll('[role="columnheader"]'))
-                    .map(header => header.getAttribute('data-field'))
-                    .filter(Boolean)
-            );
+        candidateGrids.forEach(grid => {
+            getRows(grid).forEach(row => {
+                const { creditor, date, action } = extractCreditorDateAction(row);
+                if (!creditor) return;
 
-            if (!['experian', 'equifax', 'transunion'].some(key => headers.has(key))) return;
+                BUREAUS.forEach(bureau => {
+                    const value = textValue(row.querySelector(`[data-field="${bureau.key}"]`));
+                    if (isPlaceholder(value)) return;
 
-            grid.querySelectorAll('.MuiDataGrid-row').forEach(row => {
-                let creditor = '';
-                let action = '';
-                let date = '';
-                const labelCell = row.querySelector('[data-field="label"]');
-                const parentText = labelCell?.parentElement?.innerText || labelCell?.innerText || '';
-                const lines = parentText.split(/\r?\n/).map(s => s.trim()).filter(Boolean);
-
-                const actionPatterns = [
-                    /click to dispute this inquiry/i,
-                    /already disputed/i,
-                    /click to view dispute/i,
-                    /click to dispute/i
-                ];
-                const dateRegex = /\b\d{1,2}[\/\-]\d{1,2}[\/\-]\d{2,4}\b/;
-
-                for (const line of lines) {
-                    if (dateRegex.test(line)) continue;
-                    const lower = line.toLowerCase();
-                    if (['experian', 'equifax', 'transunion'].includes(lower)) continue;
-                    if (actionPatterns.some(rx => rx.test(line))) {
-                        action = line;
-                        continue;
-                    }
-                    if (!creditor) creditor = line;
-                }
-
-                const rowText = textValue(row);
-                const dateMatch = rowText.match(dateRegex);
-                if (dateMatch) date = dateMatch[0];
-
-                ['experian', 'equifax', 'transunion'].forEach(bureau => {
-                    const cell = row.querySelector(`[data-field="${bureau}"]`);
-                    const value = textValue(cell);
-                    if (!value || value === '-' || value === '--' || !creditor) return;
-
-                    const alreadyDisputed = /already disputed/i.test(action);
-                    const idSeed = [bureau, normalizeName(creditor), date || value].join('|');
+                    const alreadyDisputed = /already\s+disputed/i.test(action);
+                    const identity = [
+                        bureau.key,
+                        normalizeName(creditor),
+                        date || value
+                    ].join('|');
 
                     results.push({
-                        id: `INQ-${stableHash(idSeed)}`,
-                        creditor: creditor.trim(),
+                        id: `INQ-${stableHash(identity)}`,
+                        creditor,
                         date,
                         action,
-                        bureauKey: bureau,
+                        bureauKey: bureau.key,
+                        bureauLabel: bureau.label,
+                        bureauShort: bureau.short,
                         alreadyDisputed,
                         rawValue: value,
                         connectedToOpen: false
@@ -427,226 +486,292 @@
         const unique = [];
         const seen = new Set();
         results.forEach(item => {
-            const key = [item.bureauKey, normalizeName(item.creditor), item.date, item.action].join('|');
+            const key = [
+                item.bureauKey,
+                normalizeName(item.creditor),
+                item.date,
+                normalizeName(item.action)
+            ].join('|');
             if (seen.has(key)) return;
             seen.add(key);
             unique.push(item);
         });
-        return unique;
-    }
 
-    function stableHash(value) {
-        let hash = 2166136261;
-        for (let i = 0; i < value.length; i++) {
-            hash ^= value.charCodeAt(i);
-            hash = Math.imul(hash, 16777619);
-        }
-        return (hash >>> 0).toString(16).toUpperCase().padStart(8, '0').slice(0, 8);
+        unique.sort((a, b) => {
+            const da = parseDate(a.date)?.getTime() || 0;
+            const db = parseDate(b.date)?.getTime() || 0;
+            return db - da;
+        });
+
+        return unique;
     }
 
     function enrichConnections(inquiries, openAccountsByBureau) {
         return inquiries.map(item => ({
             ...item,
-            connectedToOpen: (openAccountsByBureau[item.bureauKey] || []).some(account => namesMatch(item.creditor, account.account))
+            connectedToOpen: (openAccountsByBureau[item.bureauKey] || [])
+                .some(account => {
+                    const a = normalizeName(item.creditor);
+                    const b = normalizeName(account.account);
+                    return !!a && !!b && (a === b || a.includes(b) || b.includes(a));
+                })
         }));
     }
 
-    function getCurrentGroups(items) {
-        return [
-            { title: 'EXPERIAN', bureauKey: 'experian', items: items.filter(i => i.bureauKey === 'experian') },
-            { title: 'EQUIFAX', bureauKey: 'equifax', items: items.filter(i => i.bureauKey === 'equifax') },
-            { title: 'TRANSUNION', bureauKey: 'transunion', items: items.filter(i => i.bureauKey === 'transunion') }
-        ];
-    }
-
-    function ensurePanel() {
+    function createPanel() {
         document.getElementById(CONFIG.panelId)?.remove();
+
         const panel = document.createElement('div');
         panel.id = CONFIG.panelId;
         panel.innerHTML = `
-            <div class="tubol-topbar">
-                <div class="tubol-title">TUBOL-INQUIRY</div>
-                <div class="tubol-controls">
-                    <button class="tubol-window-btn tubol-minimize" title="Minimize">−</button>
-                    <button class="tubol-window-btn tubol-close" title="Close">✕</button>
+            <div class="ti-topbar">
+                <div class="ti-title">TUBOL INQUIRY</div>
+                <div class="ti-controls">
+                    <button class="ti-window-btn ti-minimize" title="Minimize">−</button>
+                    <button class="ti-window-btn ti-close" title="Close">✕</button>
                 </div>
             </div>
-            <div class="tubol-stats">
-                <div class="tubol-stat"><b data-stat="total">0</b><span>Total</span></div>
-                <div class="tubol-stat"><b data-stat="unconnected">0</b><span>Unconnected</span></div>
-                <div class="tubol-stat"><b data-stat="recent">0</b><span>Recent</span></div>
-                <div class="tubol-stat"><b data-stat="disputed">0</b><span>Already Disputed</span></div>
+            <div class="ti-stats">
+                <div class="ti-stat"><b data-total>0</b><span>Total</span></div>
+                <div class="ti-stat"><b data-unconnected>0</b><span>Unconnected</span></div>
+                <div class="ti-stat"><b data-connected>0</b><span>Connected</span></div>
+                <div class="ti-stat"><b data-new>0</b><span>New</span></div>
             </div>
-            <div class="tubol-tabs">
-                <button class="tubol-tab active" data-tab="all">INQUIRIES</button>
-                <button class="tubol-tab" data-tab="recent">NEW</button>
-                <button class="tubol-tab" data-tab="open">OPEN ACCOUNTS</button>
+            <div class="ti-tabs">
+                <button class="ti-tab active" data-view="all">ALL</button>
+                <button class="ti-tab" data-view="unconnected">UNCONNECTED</button>
+                <button class="ti-tab" data-view="new">NEW</button>
+                <button class="ti-tab" data-view="open">OPEN ACCOUNTS</button>
             </div>
-            <div class="tubol-content"></div>
-            <div class="tubol-copy-bar">
-                <button class="tubol-main-scan">SCAN</button>
-                <button class="tubol-copy-btn">COPY</button>
+            <div class="ti-content">
+                <div class="ti-status" data-status>Ready to scan CRC.</div>
+                <div data-results></div>
+            </div>
+            <div class="ti-copybar">
+                <button class="ti-scan" data-scan>SCAN</button>
+                <button class="ti-copy" data-copy>COPY</button>
             </div>
         `;
+
         document.body.appendChild(panel);
         return panel;
     }
 
     function render(panel, inquiries, openAccounts) {
-        const content = panel.querySelector('.tubol-content');
-        const activeTab = panel.querySelector('.tubol-tab.active')?.dataset.tab || 'all';
+        const results = panel.querySelector('[data-results]');
+        const status = panel.querySelector('[data-status]');
+        results.innerHTML = '';
 
-        panel.querySelector('[data-stat="total"]').textContent = inquiries.length;
-        panel.querySelector('[data-stat="unconnected"]').textContent = inquiries.filter(i => !i.connectedToOpen).length;
-        panel.querySelector('[data-stat="recent"]').textContent = inquiries.filter(i => isRecent(i)).length;
-        panel.querySelector('[data-stat="disputed"]').textContent = inquiries.filter(i => i.alreadyDisputed).length;
+        const newItems = inquiries.filter(item => isRecent(item));
+        const unconnectedItems = inquiries.filter(item => !item.connectedToOpen);
+        const connectedItems = inquiries.filter(item => item.connectedToOpen);
 
-        content.innerHTML = '';
+        panel.querySelector('[data-total]').textContent = inquiries.length;
+        panel.querySelector('[data-unconnected]').textContent = unconnectedItems.length;
+        panel.querySelector('[data-connected]').textContent = connectedItems.length;
+        panel.querySelector('[data-new]').textContent = newItems.length;
+        status.textContent = `Found ${inquiries.length} inquiries across ${new Set(inquiries.map(i => i.bureauKey)).size} bureau(s).`;
 
-        if (activeTab === 'open') {
-            const groups = [
-                { title: 'EXPERIAN', bureauKey: 'experian', items: openAccounts.byBureau.experian },
-                { title: 'EQUIFAX', bureauKey: 'equifax', items: openAccounts.byBureau.equifax },
-                { title: 'TRANSUNION', bureauKey: 'transunion', items: openAccounts.byBureau.transunion }
-            ];
-            groups.forEach(group => {
+        const state = { view: 'all' };
+        let currentCopy = '';
+
+        function groupsForView(view) {
+            if (view === 'unconnected') return unconnectedItems;
+            if (view === 'new') return newItems;
+            return inquiries;
+        }
+
+        function renderInquiryGroups(items) {
+            results.innerHTML = '';
+            currentCopy = '';
+
+            if (!items.length) {
+                const empty = document.createElement('div');
+                empty.className = 'ti-empty';
+                empty.textContent = 'No inquiries found for this view.';
+                results.appendChild(empty);
+                return;
+            }
+
+            BUREAUS.forEach(bureau => {
+                const bureauItems = items.filter(item => item.bureauKey === bureau.key);
                 const section = document.createElement('div');
-                section.className = 'tubol-section';
+                section.className = 'ti-section';
+
                 const title = document.createElement('div');
-                title.className = 'tubol-section-title';
-                title.textContent = `${group.title} (${group.items.length})`;
-                section.appendChild(title);
-                if (!group.items.length) {
-                    const empty = document.createElement('div');
-                    empty.className = 'tubol-empty';
-                    empty.textContent = 'No open accounts found.';
-                    section.appendChild(empty);
+                title.className = 'ti-section-title';
+                title.innerHTML = `<span>${bureau.label} (${bureauItems.length})</span><span>▾</span>`;
+                const body = document.createElement('div');
+                title.addEventListener('click', () => {
+                    body.hidden = !body.hidden;
+                    title.lastElementChild.textContent = body.hidden ? '▸' : '▾';
+                });
+
+                if (!bureauItems.length) {
+                    const none = document.createElement('div');
+                    none.className = 'ti-meta';
+                    none.textContent = 'No inquiries';
+                    body.appendChild(none);
                 } else {
-                    group.items.forEach(item => {
+                    bureauItems.forEach(item => {
                         const card = document.createElement('div');
-                        card.className = 'tubol-item connected';
-                        card.innerHTML = `<div class="tubol-item-head"><div class="tubol-creditor"></div><div class="tubol-badge">OPEN</div></div><div class="tubol-meta">${group.title}</div>`;
-                        card.querySelector('.tubol-creditor').textContent = item.account;
-                        section.appendChild(card);
+                        card.className = `ti-item ${item.connectedToOpen ? 'connected' : 'unconnected'}`;
+                        card.title = item.connectedToOpen ? 'Connected to Open Account' : 'Not Connected to Open Account';
+
+                        const head = document.createElement('div');
+                        head.className = 'ti-head';
+                        const creditor = document.createElement('div');
+                        creditor.className = 'ti-creditor';
+                        creditor.textContent = item.creditor;
+                        const badge = document.createElement('div');
+                        badge.className = 'ti-badge';
+                        badge.textContent = item.alreadyDisputed ? 'AD' : 'ND';
+                        head.appendChild(creditor);
+                        head.appendChild(badge);
+
+                        const meta = document.createElement('div');
+                        meta.className = 'ti-meta';
+                        meta.textContent = `${item.date || 'No date'} • ${item.connectedToOpen ? 'Connected to OPEN account' : 'Not connected to OPEN account'}`;
+
+                        const id = document.createElement('div');
+                        id.className = 'ti-id';
+                        id.textContent = item.id;
+
+                        card.appendChild(head);
+                        card.appendChild(meta);
+                        card.appendChild(id);
+                        body.appendChild(card);
+
+                        if (!item.connectedToOpen) {
+                            currentCopy += `${bureau.label}: ${item.creditor} ${item.date || ''} [${item.id}]\n`;
+                        }
                     });
                 }
-                content.appendChild(section);
+
+                section.appendChild(title);
+                section.appendChild(body);
+                results.appendChild(section);
             });
-            return;
+
+            currentCopy = currentCopy.trim();
         }
 
-        const source = activeTab === 'recent' ? inquiries.filter(i => isRecent(i)) : inquiries;
-        getCurrentGroups(source).forEach(group => {
-            const section = document.createElement('div');
-            section.className = 'tubol-section';
-            const title = document.createElement('div');
-            title.className = 'tubol-section-title';
-            title.textContent = `${group.title} (${group.items.length})`;
-            section.appendChild(title);
-
-            if (!group.items.length) {
+        function renderOpenAccounts() {
+            results.innerHTML = '';
+            currentCopy = '';
+            if (!openAccounts.length) {
                 const empty = document.createElement('div');
-                empty.className = 'tubol-empty';
-                empty.textContent = activeTab === 'recent' ? 'No recent inquiries.' : 'No inquiries found.';
-                section.appendChild(empty);
-            } else {
-                group.items.forEach(item => {
-                    const card = document.createElement('div');
-                    card.className = `tubol-item ${item.connectedToOpen ? 'connected' : 'unconnected'}`;
-                    card.title = item.connectedToOpen ? 'Connected to OPEN account on same bureau' : 'Not connected to OPEN account on same bureau';
-                    card.innerHTML = `
-                        <div class="tubol-item-head">
-                            <div class="tubol-creditor"></div>
-                            <div class="tubol-badge">${item.alreadyDisputed ? 'AD' : 'ND'}</div>
-                        </div>
-                        <div class="tubol-meta">${item.date || 'Date unavailable'} · ${item.connectedToOpen ? 'CONNECTED' : 'UNCONNECTED'}</div>
-                        <div class="tubol-id"></div>
-                    `;
-                    card.querySelector('.tubol-creditor').textContent = item.creditor;
-                    card.querySelector('.tubol-id').textContent = item.id;
-                    section.appendChild(card);
-                });
+                empty.className = 'ti-empty';
+                empty.textContent = 'No open accounts found.';
+                results.appendChild(empty);
+                return;
             }
-            content.appendChild(section);
-        });
-    }
 
-    function copyText(inquiries, activeTab) {
-        const source = activeTab === 'recent' ? inquiries.filter(isRecent) : inquiries;
-        if (activeTab === 'open') return '';
-        const unconnected = source.filter(item => !item.connectedToOpen);
-        const groups = getCurrentGroups(unconnected);
-        return groups.map(group => {
-            const lines = group.items.map(item => `- ${item.creditor.toLowerCase()} ${item.date || ''}`.trim());
-            return `${group.title}:\n${lines.length ? lines.join('\n') : '(No unconnected inquiries)'}`;
-        }).join('\n\n');
-    }
+            BUREAUS.forEach(bureau => {
+                const items = openAccounts.filter(item => item.bureauKey === bureau.key);
+                if (!items.length) return;
 
-    function install() {
-        if (!document.getElementById('tubol-inquiry-styles')) {
-            const style = document.createElement('style');
-            style.id = 'tubol-inquiry-styles';
-            style.textContent = STYLE;
-            document.head.appendChild(style);
+                const section = document.createElement('div');
+                section.className = 'ti-section';
+                const title = document.createElement('div');
+                title.className = 'ti-section-title';
+                title.textContent = `${bureau.label} (${items.length})`;
+                const body = document.createElement('div');
+
+                items.forEach(item => {
+                    const card = document.createElement('div');
+                    card.className = 'ti-open-card';
+                    card.textContent = item.account;
+                    body.appendChild(card);
+                    currentCopy += `${bureau.label}: ${item.account}\n`;
+                });
+
+                section.appendChild(title);
+                section.appendChild(body);
+                results.appendChild(section);
+            });
+
+            currentCopy = currentCopy.trim();
         }
 
-        let current = { inquiries: [], openAccounts: { all: [], byBureau: { experian: [], equifax: [], transunion: [] } } };
-        const button = document.getElementById(CONFIG.scanButtonId) || document.createElement('button');
-        button.id = CONFIG.scanButtonId;
-        button.textContent = 'TUBOL INQUIRY';
-        Object.assign(button.style, {
-            position: 'fixed', right: '24px', bottom: '24px', zIndex: '999999',
-            height: '44px', padding: '0 18px', border: '0', borderRadius: '9px',
-            background: '#2374e1', color: '#fff', cursor: 'pointer', fontWeight: '800'
+        function applyView(view) {
+            state.view = view;
+            panel.querySelectorAll('.ti-tab').forEach(tab => tab.classList.toggle('active', tab.dataset.view === view));
+            if (view === 'open') renderOpenAccounts();
+            else renderInquiryGroups(groupsForView(view));
+        }
+
+        panel.querySelectorAll('.ti-tab').forEach(tab => {
+            tab.addEventListener('click', () => applyView(tab.dataset.view));
         });
-        if (!button.parentElement) document.body.appendChild(button);
 
-        button.onclick = async function () {
-            button.disabled = true;
-            const oldText = button.textContent;
-            button.textContent = 'Scanning...';
+        panel.querySelector('.ti-copy').addEventListener('click', async function () {
             try {
-                const openAccounts = extractOpenAccounts();
-                const inquiries = enrichConnections(extractInquiries(), openAccounts.byBureau);
-                current = { inquiries, openAccounts };
-                const panel = ensurePanel();
-
-                panel.querySelectorAll('.tubol-tab').forEach(tab => {
-                    tab.onclick = () => {
-                        panel.querySelectorAll('.tubol-tab').forEach(t => t.classList.toggle('active', t === tab));
-                        render(panel, current.inquiries, current.openAccounts);
-                    };
-                });
-
-                panel.querySelector('.tubol-close').onclick = () => panel.remove();
-                panel.querySelector('.tubol-minimize').onclick = function () {
-                    const minimized = panel.dataset.minimized === '1';
-                    panel.dataset.minimized = minimized ? '0' : '1';
-                    panel.querySelector('.tubol-stats').style.display = minimized ? '' : 'none';
-                    panel.querySelector('.tubol-tabs').style.display = minimized ? '' : 'none';
-                    panel.querySelector('.tubol-content').style.display = minimized ? '' : 'none';
-                    panel.querySelector('.tubol-copy-bar').style.display = minimized ? '' : 'none';
-                    this.textContent = minimized ? '−' : '+';
-                };
-                panel.querySelector('.tubol-main-scan').onclick = () => button.click();
-                panel.querySelector('.tubol-copy-btn').onclick = async function () {
-                    const activeTab = panel.querySelector('.tubol-tab.active')?.dataset.tab || 'all';
-                    const text = copyText(current.inquiries, activeTab);
-                    await navigator.clipboard.writeText(text);
-                    const original = this.textContent;
-                    this.textContent = 'COPIED';
-                    setTimeout(() => this.textContent = original, 1200);
-                };
-
-                render(panel, inquiries, openAccounts);
+                await navigator.clipboard.writeText(currentCopy || '');
+                const old = this.textContent;
+                this.textContent = '✓ COPIED';
+                setTimeout(() => { this.textContent = old; }, 1200);
             } catch (error) {
-                console.error('[TUBOL-INQUIRY]', error);
-            } finally {
-                button.disabled = false;
-                button.textContent = oldText;
+                console.error('TUBOL-INQUIRY copy failed', error);
             }
-        };
+        });
+
+        applyView(state.view);
     }
 
-    install();
+    function scan(panel) {
+        const status = panel.querySelector('[data-status]');
+        status.textContent = 'Scanning CRC inquiry tables...';
+
+        const openAccountsData = extractOpenAccounts();
+        const rawInquiries = extractInquiries();
+        const inquiries = enrichConnections(rawInquiries, openAccountsData.byBureau);
+
+        render(panel, inquiries, openAccountsData.all);
+
+        if (!inquiries.length) {
+            panel.querySelector('[data-status]').textContent =
+                'No inquiries detected. CRC may still be virtualizing the table; scroll the inquiry section once and scan again.';
+        }
+    }
+
+    function addStyles() {
+        if (document.getElementById(CONFIG.styleId)) return;
+        const style = document.createElement('style');
+        style.id = CONFIG.styleId;
+        style.textContent = STYLE;
+        document.head.appendChild(style);
+    }
+
+    addStyles();
+
+    let panel = createPanel();
+
+    const scanButton = document.getElementById(CONFIG.scanButtonId) || document.createElement('button');
+    scanButton.id = CONFIG.scanButtonId;
+    scanButton.textContent = 'TUBOL INQUIRY';
+    document.body.appendChild(scanButton);
+
+    const performScan = () => {
+        panel = document.getElementById(CONFIG.panelId) || createPanel();
+        scan(panel);
+    };
+
+    scanButton.onclick = performScan;
+    panel.querySelector('[data-scan]').onclick = performScan;
+
+    panel.querySelector('.ti-close').onclick = () => {
+        panel.remove();
+    };
+
+    panel.querySelector('.ti-minimize').onclick = () => {
+        const content = panel.querySelector('.ti-content');
+        const stats = panel.querySelector('.ti-stats');
+        const tabs = panel.querySelector('.ti-tabs');
+        const copybar = panel.querySelector('.ti-copybar');
+        const minimized = panel.dataset.minimized === '1';
+        [content, stats, tabs, copybar].forEach(el => { el.style.display = minimized ? '' : 'none'; });
+        panel.dataset.minimized = minimized ? '0' : '1';
+        panel.querySelector('.ti-minimize').textContent = minimized ? '−' : '+';
+    };
 })();
